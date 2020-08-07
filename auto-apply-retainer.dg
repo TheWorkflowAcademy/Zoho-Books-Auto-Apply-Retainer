@@ -1,0 +1,70 @@
+// Get Organization Info
+organizationId = organization.get("organization_id");
+
+// Get Invoice Info
+invoiceId = invoice.get("invoice_id");
+invoiceBalance = invoice.get("balance").toDecimal();
+
+// Get Customer Info
+customerId = invoice.get("customer_id");
+
+// Get Retainers
+retainersResponse = invokeurl
+[
+	url :"https://books.zoho.com/api/v3/contacts/" + customerId + "/receivables/unusedretainerpayments?organization_id=" + organizationId
+	type :GET
+	connection:"zoho_books"
+];
+
+// Structure the data from the retainers response
+retainersData = retainersResponse.get("unused_credits_receivable");
+retainersAmountTotal = retainersData.get("total_unapplied_credit_amount").toDecimal();
+retainers = retainersData.get("unapplied_amounts");
+
+// Loop over retainers and add retainer payments to map
+applyRetainersList = List();
+for each retainer in retainers {
+	
+	// Check if Invoice has a remaining balance
+	if(invoiceBalance > 0) {
+		
+		// Verify the record is truly a retainer
+		if(retainer.get("entity_name") == "retainer_payment") {
+			
+			// Check if Retainer has remaining balance
+			retainerBalance = retainer.get("balance").toDecimal();
+			if(retainerBalance > 0) {
+				
+				// Create Map to hold data about the retainer
+				applyRetainersMap = Map();
+				applyRetainersMap.put("payment_id", retainer.get("entity_id"));
+				
+				// If the retainer is bigger than invoice, only apply invoice amount. If the invoice is bigger, only apply retainer.
+				if(retainerBalance >= invoiceBalance) {
+					applyRetainersMap.put("amount_applied", invoiceBalance);
+				}
+				else {
+					applyRetainersMap.put("amount_applied", retainerBalance);
+					invoiceBalance = invoiceBalance - retainerBalance;
+				}
+				
+				// Add data to the List
+				applyRetainersList.add(applyRetainersMap);
+			}
+		}
+	}
+}
+
+// Structure apply retainer data for the API call parameters
+json = {"invoice_payments": applyRetainersList};
+applyRetainersParams = {"JSONString": json};
+
+// Apply the Retainers via Zoho Books API
+applyRetainers = invokeurl [
+	url: "https://books.zoho.com/api/v3/invoices/" + invoiceId + "/credits?organization_id=" + organizationId
+	type: POST
+	parameters: applyRetainersParams
+	connection: "zoho_books"
+];
+
+info applyRetainers;
